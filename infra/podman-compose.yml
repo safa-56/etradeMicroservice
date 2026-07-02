@@ -1,0 +1,178 @@
+# Etiya11 Microservices - Altyapı (Infrastructure) Compose Dosyası
+#
+# Çalıştırmak için:
+#   cd infra
+#   podman compose -f podman-compose.yml up -d
+#
+# Durdurmak için:
+#   podman compose -f podman-compose.yml down
+#
+# Volume'lerle birlikte tamamen silmek için:
+#   podman compose -f podman-compose.yml down -v
+
+version: "3.8"
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL veritabanı
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    container_name: etiya-postgres
+    restart: unless-stopped
+    # Debezium (CDC) icin Postgres'in transaction log'u "logical" seviyede yazmali.
+    # wal_level=logical olmadan replication slot / pgoutput calismaz.
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_wal_senders=10"
+      - "-c"
+      - "max_replication_slots=10"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: productdb
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Ilk acilista (bos volume) order-service icin orderdb veritabanini olusturur.
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d productdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - etiya-net
+
+  # ---------------------------------------------------------------------------
+  # Apache Kafka (KRaft modu - Zookeeper'a ihtiyaç duymaz)
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: docker.io/apache/kafka:3.7.0
+    container_name: etiya-kafka
+    restart: unless-stopped
+    ports:
+      # Host (uygulamalar) için dış erişim portu
+      - "9092:9092"
+    environment:
+      # --- KRaft (broker + controller aynı node) ---
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      # --- Listener tanımları ---
+      # PLAINTEXT: container ağı içinden erişim (kafka:29092)
+      # PLAINTEXT_HOST: host makineden erişim (localhost:9092)
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # --- Tek node için replikasyon ayarları ---
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+      # --- Veri ve cluster ayarları ---
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: etiya-kafka-cluster-001
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - etiya-net
+
+  # ---------------------------------------------------------------------------
+  # Kafka Connect + Debezium (CDC)
+  #
+  # Postgres'in WAL log'unu okuyup outbox_events tablosuna yapilan INSERT'leri
+  # Kafka'ya event olarak yazar. Polling yapan OutboxMessageRelay'in yerini alir.
+  #
+  # Connector'i kaydetmek icin (servisler ayaga kalktiktan ve order-service
+  # tablolari olusturduktan SONRA):
+  #   Invoke-RestMethod -Method Post -Uri http://localhost:8083/connectors `
+  #     -ContentType application/json `
+  #     -InFile infra/debezium/order-outbox-connector.json
+  # Ayrintili adimlar icin: infra/DEBEZIUM.md
+  # ---------------------------------------------------------------------------
+  connect:
+    image: quay.io/debezium/connect:3.0
+    container_name: etiya-connect
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    ports:
+      # Kafka Connect REST API (connector kaydi burada yapilir)
+      - "8083:8083"
+    environment:
+      # Kafka broker'a container agi icinden erisim
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: etiya-connect-cluster
+      # Connect'in kendi durumunu tuttugu internal topic'ler
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      STATUS_STORAGE_TOPIC: connect_statuses
+      # Tek node Kafka -> internal topic'ler tek replica olmali
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      # Mesaj degeri duz JSON objesi olsun (product-service boyle bekliyor)
+      KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+    networks:
+      - etiya-net
+
+  # ---------------------------------------------------------------------------
+  # Connector otomatik kayit yardimcisi (tek seferlik calisir, sonra kapanir)
+  #
+  # Connect REST API hazir olana kadar bekler, sonra Debezium connector'ini
+  # kaydeder. Boylece elle "POST /connectors" adimina gerek kalmaz.
+  # Idempotent'tir: connector zaten varsa (HTTP 409) hata vermez.
+  #
+  # NOT: order-service ayakta olmali (outbox_events tablosu olusmus olmali),
+  # aksi halde connector baslar ama izlenecek tabloyu bulamaz.
+  # ---------------------------------------------------------------------------
+  connect-register:
+    image: docker.io/curlimages/curl:8.11.1
+    container_name: etiya-connect-register
+    depends_on:
+      connect:
+        condition: service_started
+    restart: "no"
+    volumes:
+      - ./debezium:/config:ro
+    entrypoint:
+      - sh
+      - -c
+      - >
+        echo 'Connect REST bekleniyor...';
+        until curl -sf http://connect:8083/connectors >/dev/null 2>&1; do sleep 3; done;
+        echo 'Connect hazir, connector kaydediliyor...';
+        code=$$(curl -s -o /dev/null -w '%{http_code}' -X POST
+        -H 'Content-Type: application/json'
+        --data @/config/order-outbox-connector.json
+        http://connect:8083/connectors);
+        if [ "$$code" = "201" ] || [ "$$code" = "409" ]; then
+        echo "Connector hazir (HTTP $$code).";
+        else
+        echo "Connector kaydi BASARISIZ (HTTP $$code)."; exit 1;
+        fi
+    networks:
+      - etiya-net
+
+volumes:
+  postgres-data:
+  kafka-data:
+
+networks:
+  etiya-net:
+    driver: bridge
