@@ -1,0 +1,22 @@
+spring:
+  datasource:
+    url: ${PRODUCT_DB_URL:jdbc:postgresql://localhost:5433/productdb}
+    username: ${PRODUCT_DB_USERNAME:postgres}
+    password: ${PRODUCT_DB_PASSWORD:postgres}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+  cloud:
+    stream:
+      kafka:
+        binder:
+          brokers: ${KAFKA_BROKERS:localhost:9092}
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://test-eureka.etiya.com/eureka/

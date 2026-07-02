@@ -333,3 +333,51 @@ Asagidaki degisikliklerden biri yapildiginda bu dokuman da guncellenmelidir:
 - Kafka publish sorumlulugu Debezium disinda baska bir mekanizmaya tasinirsa.
 - Stok dusme disinda yeni consumer side effect'leri eklenirse.
 
+## 2026-07-02 Config Server Degisikligi
+
+Projeye merkezi konfigurasyon icin `config-server` modulu eklendi.
+
+Artik servislerin detayli runtime ayarlari kendi `src/main/resources/application.yml` dosyalarinda tutulmaz. Bu dosyalar sadece servis adini, aktif profili ve config-server baglantisini tasir:
+
+```yaml
+spring:
+  application:
+    name: product-service
+  profiles:
+    active: local
+  config:
+    import: configserver:http://localhost:8888
+```
+
+Merkezi konfigurasyonlar repo kokundeki `configs/` klasoru altindadir:
+
+```text
+configs/<service-name>/application.yml
+configs/<service-name>/application-local.yml
+configs/<service-name>/application-test.yml
+configs/<service-name>/application-prod.yml
+```
+
+Ornek:
+
+```text
+configs/product-service/application-local.yml
+```
+
+`application.yml` dosyasi servis icin ortak ayarlari tutar. `application-local.yml`, `application-test.yml` ve `application-prod.yml` dosyalari sadece ilgili profil icin degisen ayarlari override eder.
+
+Kafka consumer ayarlari da artik `product-service/src/main/resources/application.yml` icinde degil, merkezi config altindadir:
+
+```text
+configs/product-service/application-local.yml
+configs/product-service/application-test.yml
+configs/product-service/application-prod.yml
+```
+
+Bu nedenle `order-created` topic adi, Kafka broker adresi veya consumer group degistirilirse ilgili `configs/product-service/application-<profile>.yml` dosyalari guncellenmelidir.
+
+Config Server, konfigurasyonlari su GitHub reposundaki `configs/{application}` path'lerinden okuyacak sekilde ayarlandi:
+
+```text
+https://github.com/safa-56/etradeMicroservice.git
+```

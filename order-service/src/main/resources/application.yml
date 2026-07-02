@@ -1,41 +1,7 @@
-server:
-  port: 0
-
 spring:
   application:
     name: order-service
   profiles:
-    active: dev
-
-  # PostgreSQL: hem orders hem outbox_events tablosu burada; Debezium bu DB'yi (WAL) dinler.
-  # (infra/podman-compose.yml -> postgres, host portu 5433, veritabani orderdb)
-  datasource:
-    url: jdbc:postgresql://localhost:5433/orderdb
-    driver-class-name: org.postgresql.Driver
-    username: postgres
-    password: postgres
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: true
-    properties:
-      hibernate:
-        format_sql: true
-
-# NOT: Kafka'ya yayin artik order-service tarafinda degil; Debezium (Kafka Connect)
-# outbox_events tablosuna yapilan insert'leri "order-created" topic'ine yaziyor.
-# Bu yuzden spring.cloud.stream ve outbox.poller ayarlari kaldirildi.
-
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,info
-
-eureka:
-  client:
-    register-with-eureka: true # kendini ayağa kalktığın an eurekaya tanıt
-    fetch-registry: true # istenildiğinde diğer servislerin bilgisini çek
-  instance:
-    instance-id: ${spring.application.name}:${random.uuid}
-    prefer-ip-address: true
+    active: local
+  config:
+    import: configserver:http://localhost:8888
