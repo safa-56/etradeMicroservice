@@ -38,7 +38,7 @@ services:
       - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      # Ilk acilista (bos volume) order-service icin orderdb veritabanini olusturur.
+      # Ilk acilista (bos volume) servis veritabanlarini olusturur.
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d productdb"]
@@ -90,7 +90,7 @@ services:
   # ---------------------------------------------------------------------------
   # Kafka Connect + Debezium (CDC)
   #
-  # Postgres'in WAL log'unu okuyup outbox_events tablosuna yapilan INSERT'leri
+  # Postgres'in WAL log'unu okuyup outbox_events tablolarina yapilan INSERT'leri
   # Kafka'ya event olarak yazar. Polling yapan OutboxMessageRelay'in yerini alir.
   #
   # Connector'i kaydetmek icin (servisler ayaga kalktiktan ve order-service
@@ -134,7 +134,7 @@ services:
   # ---------------------------------------------------------------------------
   # Connector otomatik kayit yardimcisi (tek seferlik calisir, sonra kapanir)
   #
-  # Connect REST API hazir olana kadar bekler, sonra Debezium connector'ini
+  # Connect REST API hazir olana kadar bekler, sonra Debezium connector'larini
   # kaydeder. Boylece elle "POST /connectors" adimina gerek kalmaz.
   # Idempotent'tir: connector zaten varsa (HTTP 409) hata vermez.
   #
@@ -156,16 +156,17 @@ services:
       - >
         echo 'Connect REST bekleniyor...';
         until curl -sf http://connect:8083/connectors >/dev/null 2>&1; do sleep 3; done;
-        echo 'Connect hazir, connector kaydediliyor...';
+        echo 'Connect hazir, connectorlar kaydediliyor...';
+        for file in /config/*.json; do
+        echo "Connector kaydediliyor: $$file";
         code=$$(curl -s -o /dev/null -w '%{http_code}' -X POST
-        -H 'Content-Type: application/json'
-        --data @/config/order-outbox-connector.json
-        http://connect:8083/connectors);
+        -H 'Content-Type: application/json' --data @"$$file" http://connect:8083/connectors);
         if [ "$$code" = "201" ] || [ "$$code" = "409" ]; then
-        echo "Connector hazir (HTTP $$code).";
+        echo "Connector hazir: $$file (HTTP $$code).";
         else
-        echo "Connector kaydi BASARISIZ (HTTP $$code)."; exit 1;
-        fi
+        echo "Connector kaydi BASARISIZ: $$file (HTTP $$code)."; exit 1;
+        fi;
+        done
     networks:
       - etiya-net
 

@@ -158,7 +158,7 @@ Kafka broker KRaft modunda calisir ve host uygulamalari icin `localhost:9092` po
 
 Kafka Connect + Debezium servisi, PostgreSQL WAL kayitlarini okuyup Kafka'ya event yazar.
 
-`connect-register` servisi, Kafka Connect REST API hazir oldugunda `order-outbox-connector.json` dosyasindaki connector'u otomatik kaydeder. Connector zaten varsa HTTP 409 durumunu hata kabul etmez.
+`connect-register` servisi, Kafka Connect REST API hazir oldugunda `infra/debezium/*.json` altindaki connector dosyalarini otomatik kaydeder. Connector zaten varsa HTTP 409 durumunu hata kabul etmez.
 
 ## Consumer Tarafi: product-service
 
@@ -332,6 +332,108 @@ Asagidaki degisikliklerden biri yapildiginda bu dokuman da guncellenmelidir:
 - Yeni bir service Kafka event'i consume etmeye baslarsa.
 - Kafka publish sorumlulugu Debezium disinda baska bir mekanizmaya tasinirsa.
 - Stok dusme disinda yeni consumer side effect'leri eklenirse.
+- Payment veya notification event akislari degisirse.
+
+## 2026-07-02 Payment ve Notification Servisleri
+
+Projeye `payment-service` ve `notification-service` eklendi.
+
+Yeni event akisi:
+
+1. `order-service`, siparis olusunca transactional outbox ile `OrderCreated` event'i uretir.
+2. Debezium order outbox connector, bu event'i Kafka'daki `order-created` topic'ine yazar.
+3. `product-service`, `order-created` topic'ini `product-service` consumer group'u ile dinler ve stok dususunu inbox pattern ile idempotent yapar.
+4. `payment-service`, ayni `order-created` topic'ini `payment-service` consumer group'u ile dinler.
+5. `payment-service`, `OrderCreated` event'ini inbox pattern ile isler, `payments` tablosuna odeme kaydi yazar ve ayni transaction icinde kendi `outbox_events` tablosuna `PaymentCompleted` event'i yazar.
+6. Debezium payment outbox connector, `paymentdb.public.outbox_events` insert'lerini Kafka'daki `payment-completed` topic'ine yazar.
+7. `notification-service`, `payment-completed` topic'ini `notification-service` consumer group'u ile dinler ve bildirim kaydini inbox pattern ile idempotent yapar.
+
+Yeni servisler:
+
+- `payment-service`
+- `notification-service`
+
+Yeni merkezi config path'leri:
+
+```text
+configs/payment-service/application.yml
+configs/payment-service/application-local.yml
+configs/payment-service/application-test.yml
+configs/payment-service/application-prod.yml
+configs/notification-service/application.yml
+configs/notification-service/application-local.yml
+configs/notification-service/application-test.yml
+configs/notification-service/application-prod.yml
+```
+
+Kafka binding'leri:
+
+```yaml
+# payment-service
+spring:
+  cloud:
+    function:
+      definition: orderCreated
+    stream:
+      bindings:
+        orderCreated-in-0:
+          destination: order-created
+          group: payment-service
+```
+
+```yaml
+# notification-service
+spring:
+  cloud:
+    function:
+      definition: paymentCompleted
+    stream:
+      bindings:
+        paymentCompleted-in-0:
+          destination: payment-completed
+          group: notification-service
+```
+
+Payment tarafinda Kafka'nin getirdigi problemler icin kullanilan pattern'lar:
+
+- Duplicate consume problemi icin `payment-service/src/main/java/com/etiya/paymentservice/inbox/OrderCreatedInboxHandler.java` icinde inbox pattern kullanilir.
+- `processed_messages.message_id` primary key duplicate event'lere karsi veritabani seviyesinde son garantidir.
+- Odeme kaydi ve `PaymentCompleted` outbox kaydi ayni `@Transactional` metod icinde yazilir.
+- Bu nedenle odeme kaydi commit olursa event de outbox'a commit olur; odeme rollback olursa event de rollback olur.
+
+Notification tarafinda Kafka'nin getirdigi problemler icin kullanilan pattern'lar:
+
+- Duplicate consume problemi icin `notification-service/src/main/java/com/etiya/notificationservice/inbox/PaymentCompletedInboxHandler.java` icinde inbox pattern kullanilir.
+- Bildirim kaydi ve `processed_messages` kaydi ayni transaction icinde yazilir.
+- Ayni `PaymentCompleted` event'i tekrar gelirse bildirim tekrar olusturulmaz.
+
+Payment outbox icin Debezium connector:
+
+```text
+infra/debezium/payment-outbox-connector.json
+```
+
+Bu connector `paymentdb` veritabanindaki `public.outbox_events` tablosunu izler ve event'leri `payment-completed` topic'ine yazar:
+
+```json
+"database.dbname": "paymentdb",
+"transforms.outbox.route.topic.replacement": "payment-completed"
+```
+
+Yeni event payload'i:
+
+```text
+PaymentCompletedEvent
+```
+
+Alanlari:
+
+- `paymentId`
+- `orderId`
+- `customerId`
+- `amount`
+- `status`
+- `paidAt`
 
 ## 2026-07-02 Config Server Degisikligi
 
