@@ -1,10 +1,7 @@
 package com.etiya.paymentservice.inbox;
 
-import com.etiya.paymentservice.entities.Payment;
 import com.etiya.paymentservice.events.OrderCreatedEvent;
-import com.etiya.paymentservice.events.PaymentCompletedEvent;
-import com.etiya.paymentservice.outbox.OutboxService;
-import com.etiya.paymentservice.repositories.PaymentRepository;
+import com.etiya.paymentservice.services.abstracts.PaymentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -18,18 +15,14 @@ public class OrderCreatedInboxHandler {
     private static final Logger log = LoggerFactory.getLogger(OrderCreatedInboxHandler.class);
     private static final String CONSUMER = "payment-service";
     private static final String EVENT_TYPE = "OrderCreated";
-    private static final String PAYMENT_STATUS_COMPLETED = "COMPLETED";
 
     private final ProcessedMessageRepository processedRepository;
-    private final PaymentRepository paymentRepository;
-    private final OutboxService outboxService;
+    private final PaymentService paymentService;
 
     public OrderCreatedInboxHandler(ProcessedMessageRepository processedRepository,
-                                    PaymentRepository paymentRepository,
-                                    OutboxService outboxService) {
+                                    PaymentService paymentService) {
         this.processedRepository = processedRepository;
-        this.paymentRepository = paymentRepository;
-        this.outboxService = outboxService;
+        this.paymentService = paymentService;
     }
 
     @Transactional
@@ -40,24 +33,7 @@ public class OrderCreatedInboxHandler {
             return;
         }
 
-        Payment payment = paymentRepository.save(new Payment(
-                event.orderId(),
-                event.customerId(),
-                event.totalPrice(),
-                PAYMENT_STATUS_COMPLETED,
-                Instant.now()));
-
-        outboxService.record(
-                "Payment",
-                String.valueOf(payment.getId()),
-                "PaymentCompleted",
-                new PaymentCompletedEvent(
-                        payment.getId(),
-                        payment.getOrderId(),
-                        payment.getCustomerId(),
-                        payment.getAmount(),
-                        payment.getStatus(),
-                        payment.getPaidAt()));
+        int paymentId = paymentService.completePaymentForOrder(event);
 
         processedRepository.save(new ProcessedMessage(
                 messageId,
@@ -66,6 +42,6 @@ public class OrderCreatedInboxHandler {
                 Instant.now()));
 
         log.info("OrderCreated paid (messageId={}, orderId={}, paymentId={})",
-                messageId, event.orderId(), payment.getId());
+                messageId, event.orderId(), paymentId);
     }
 }

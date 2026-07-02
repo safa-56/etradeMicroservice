@@ -397,6 +397,8 @@ spring:
 Payment tarafinda Kafka'nin getirdigi problemler icin kullanilan pattern'lar:
 
 - Duplicate consume problemi icin `payment-service/src/main/java/com/etiya/paymentservice/inbox/OrderCreatedInboxHandler.java` icinde inbox pattern kullanilir.
+- Odeme is kurallari `payment-service/src/main/java/com/etiya/paymentservice/services/concretes/PaymentManager.java` icinde uygulanir.
+- `PaymentManager`, `payments` tablosuna odeme kaydini yazar ve odeme kaydinin sonucu olarak `PaymentCompleted` outbox event'ini uretir.
 - `processed_messages.message_id` primary key duplicate event'lere karsi veritabani seviyesinde son garantidir.
 - Odeme kaydi ve `PaymentCompleted` outbox kaydi ayni `@Transactional` metod icinde yazilir.
 - Bu nedenle odeme kaydi commit olursa event de outbox'a commit olur; odeme rollback olursa event de rollback olur.
