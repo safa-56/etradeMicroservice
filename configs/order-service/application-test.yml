@@ -3,6 +3,11 @@ spring:
     url: ${ORDER_DB_URL:jdbc:postgresql://localhost:5433/orderdb}
     username: ${ORDER_DB_USERNAME:postgres}
     password: ${ORDER_DB_PASSWORD:postgres}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8090/realms/etiya-crm-project}
   jpa:
     hibernate:
       ddl-auto: update

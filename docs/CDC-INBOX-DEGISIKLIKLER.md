@@ -138,4 +138,4 @@ Ayrıntı: [`infra/DEBEZIUM.md`](../infra/DEBEZIUM.md)
 ## İlgili dosyalar
 - Debezium çalıştırma rehberi: [`infra/DEBEZIUM.md`](../infra/DEBEZIUM.md)
 - Connector konfigürasyonu: [`infra/debezium/order-outbox-connector.json`](../infra/debezium/order-outbox-connector.json)
-- Compose: [`infra/podman-compose.yml`](../infra/podman-compose.yml)
+- Compose: [`infra/podman-compose.yml`](../infra/docker-compose.yml)

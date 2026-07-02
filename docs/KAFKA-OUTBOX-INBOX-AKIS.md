@@ -485,3 +485,22 @@ Config Server, konfigurasyonlari su GitHub reposundaki `configs/{application}` p
 ```text
 https://github.com/safa-56/etradeMicroservice.git
 ```
+
+## 2026-07-02 Keycloak JWT Authorization Degisikligi
+
+`order-service` ve `product-service`, Keycloak tarafindan uretilen JWT token'lari dogrulayacak resource server olarak duzenlendi.
+
+Merkezi config dosyalarinda issuer URI su realm'e baglandi:
+
+```text
+http://localhost:8090/realms/etiya-crm-project
+```
+
+Kod tarafinda eklenen role kurallari:
+
+- `GET /api/orders/**` -> `order_read`
+- `POST|PUT|DELETE /api/orders/**` -> `order_write`
+- `GET /api/products/**` -> `product_read`
+- `POST|PUT|DELETE /api/products/**` -> `product_write`
+
+Security config siniflari Keycloak token'i icindeki hem `realm_access.roles` hem de `resource_access.<client>.roles` rollerini `ROLE_` authority formatina cevirir.
